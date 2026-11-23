@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createBookmarkStore, resolveDestination, documentKey, readingPosition} from '../src/core.js';
-const memory = () => {const map=new Map();return {getItem:k=>map.get(k)??null,setItem:(k,v)=>map.set(k,v)}};
+import {createBookmarkStore, createProgressStore, resolveDestination, documentKey, readingPosition, shouldResume} from '../src/core.js';
+const memory = () => {const map=new Map();return {getItem:k=>map.get(k)??null,setItem:(k,v)=>map.set(k,v),removeItem:k=>map.delete(k)}};
 
 test('书签保存、改名和删除后重新打开仍恢复，文档间互不串用', () => {
  const storage=memory(), store=createBookmarkStore(storage,'book-a');
@@ -55,4 +55,33 @@ test('升级后直接读取旧 v1 书签，读取不重写已有数据',()=>{
  const storage={getItem:key=>key==='dsh-pdf-bookmarks:v1:existing-document'?raw:null,setItem:()=>writes++};
  assert.deepEqual(createBookmarkStore(storage,'existing-document').list(),[{id:'existing-bookmark',page:69,offset:0.25,label:'原有阅读位置',createdAt:'2026-10-20T04:00:00.000Z'}]);
  assert.equal(writes,0);
+});
+
+test('自动续读位置独立存储、按文档隔离且忽略损坏数据', () => {
+ const storage=memory(), store=createProgressStore(storage,'doc-a');
+ assert.equal(store.read(),null);
+ store.write({page:7,offset:0.4});
+ assert.deepEqual(createProgressStore(storage,'doc-a').read(),{page:7,offset:0.4});
+ assert.equal(createProgressStore(storage,'doc-b').read(),null);
+ assert.match(storage.getItem('dsh-pdf-bookmarks:progress:v1:doc-a'),/"updatedAt":"/);
+ for(const bad of ['{broken','{"version":2,"page":1,"offset":0}','{"version":1,"page":0,"offset":0}','{"version":1,"page":1,"offset":2}']) {
+  assert.equal(createProgressStore({getItem:()=>bad,setItem:()=>{}},'doc').read(),null);
+ }
+ store.clear();assert.equal(store.read(),null);
+});
+
+test('存储不可用时只退化为不续读，不抛异常', () => {
+ const denied={getItem:()=>{throw new Error('denied')},setItem:()=>{throw new Error('denied')}};
+ assert.equal(createProgressStore(denied,'doc').read(),null);
+ assert.throws(()=>createProgressStore(denied,'doc').write({page:2,offset:0}),/denied/);
+});
+
+test('只有离开开头且页码有效时才自动续读', () => {
+ assert.equal(shouldResume(null,10),false);
+ assert.equal(shouldResume({page:1,offset:0},10),false);
+ assert.equal(shouldResume({page:1,offset:0.01},10),false);
+ assert.equal(shouldResume({page:1,offset:0.5},10),true);
+ assert.equal(shouldResume({page:5,offset:0},10),true);
+ assert.equal(shouldResume({page:11,offset:0},10),false);
+ assert.equal(shouldResume({page:5,offset:0},undefined),false);
 });

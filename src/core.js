@@ -57,3 +57,32 @@ export function readingPosition(rects, top, bottom) {
  }
  return selected ? {page:selected.page,offset:Math.max(0,Math.min(1,(top-selected.top)/(selected.bottom-selected.top)))} : {page:1,offset:0};
 }
+
+/** 自动续读位置：与书签分键存储，损坏或不可写时只退化为“不续读”。 */
+export function createProgressStore(storage, documentKey) {
+ const key = `dsh-pdf-bookmarks:progress:v1:${documentKey}`;
+ const valid = value => value && Number.isInteger(value.page) && value.page >= 1 && Number.isFinite(value.offset) && value.offset >= 0 && value.offset <= 1;
+ return {
+  read() {
+   let raw;
+   try { raw = storage.getItem(key); } catch { return null; }
+   if (raw === null || raw === undefined) return null;
+   let parsed;
+   try { parsed = JSON.parse(raw); } catch { return null; }
+   if (parsed?.version !== 1 || !valid(parsed)) return null;
+   return {page: parsed.page, offset: parsed.offset};
+  },
+  write(position) {
+   if (!valid(position)) return;
+   storage.setItem(key, JSON.stringify({version: 1, page: position.page, offset: position.offset, updatedAt: new Date().toISOString()}));
+  },
+  clear() { try { storage.removeItem?.(key); } catch {} }
+ };
+}
+
+/** 只有确实离开开头才自动续读，避免每次打开都提示；超出当前页数视为失效。 */
+export function shouldResume(position, numPages) {
+ if (!position || !Number.isInteger(position.page) || !Number.isInteger(numPages)) return false;
+ if (position.page < 1 || position.page > numPages) return false;
+ return position.page > 1 || (Number.isFinite(position.offset) && position.offset > 0.02);
+}
