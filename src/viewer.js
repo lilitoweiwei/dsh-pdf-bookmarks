@@ -288,6 +288,16 @@ function Viewer({content, resourceAddress, scrollportRef, useTabInfo, loadEngine
  },[]);
  const bindScroll=useCallback(node=>{scroll.current=node;if(typeof scrollportRef==='function')scrollportRef(node);else if(scrollportRef)scrollportRef.current=node},[scrollportRef]);
 
+ /** 导航展开时点正文即收起。记下按下的位置，拖动选字、触摸滑动都不算“点一下”，免得选完字导航没了。 */
+ const press=useRef(null);
+ const rememberPress=event=>{press.current={x:event.clientX,y:event.clientY}};
+ const closeOnPaper=event=>{
+  const start=press.current;press.current=null;
+  if(!open||!start)return;
+  if(Math.abs(event.clientX-start.x)>6||Math.abs(event.clientY-start.y)>6)return;
+  setOpen(false);
+ };
+
  /** 视口尺寸：高度直接用于可见范围；宽度（适应宽度）延迟合并，避免拖动侧栏时逐帧重渲染。 */
  useLayoutEffect(()=>{
   const node=scroll.current;
@@ -428,7 +438,7 @@ function Viewer({content, resourceAddress, scrollportRef, useTabInfo, loadEngine
        h(Button,{'aria-label':`删除书签 ${item.label}`,onClick:()=>mutate(()=>store.remove(item.id)),title:'删除'},'×'))))):
      h('p',{className:'dpb-empty'},store?'还没有阅读书签。点击工具栏“☆ 书签”收藏当前位置。':'本地书签暂不可用，仍可阅读文档和使用目录。')),
     h('div',{className:'dpb-nav-footer'},'书签保存在本机，PDF 原文件不变')),
-   h('div',{className:'dpb-scroll',ref:bindScroll,onScroll,onWheel:()=>{},'aria-label':'PDF 文档页面',tabIndex:0},
+   h('div',{className:'dpb-scroll',ref:bindScroll,onScroll,onWheel:()=>{},onPointerDown:rememberPress,onClick:closeOnPaper,'aria-label':'PDF 文档页面',tabIndex:0},
     h('div',{className:'dpb-paper-list',style:{height:layout.total,width:Math.max(layout.width+PAD*2,fitWidth||0)}},sheets))));
 }
 
