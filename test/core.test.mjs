@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createBookmarkStore, createProgressStore, resolveDestination, documentKey, readingPosition, shouldResume} from '../src/core.js';
+import {buildMetrics, createBookmarkStore, createProgressStore, fitBasisWidth, pageIndexAt, positionAt, resolveDestination, documentKey, shouldResume, visibleRange} from '../src/core.js';
 const memory = () => {const map=new Map();return {getItem:k=>map.get(k)??null,setItem:(k,v)=>map.set(k,v),removeItem:k=>map.delete(k)}};
 
 test('书签保存、改名和删除后重新打开仍恢复，文档间互不串用', () => {
@@ -39,9 +39,38 @@ test('同一 PDF 复制或重开仍是同一书签集合，内容变化后分离
  assert.notEqual(await documentKey(a),await documentKey(new Uint8Array([37,80,68,71])));
 });
 
-test('末页不足一屏时以主要可见页保存书签，不误记前一页',()=>{
- assert.deepEqual(readingPosition([{page:2,top:-400,bottom:220},{page:3,top:232,bottom:850}],0,850),{page:3,offset:0});
- assert.deepEqual(readingPosition([{page:2,top:-200,bottom:800},{page:3,top:812,bottom:1812}],0,850),{page:2,offset:0.2});
+test('视口顶部所在的页才是当前页：封面比正文矮时不误记下一页',()=>{
+ const sizes=[{width:252,height:327},{width:590,height:792},{width:590,height:792}];
+ const table=buildMetrics(sizes,0.58,12,12);
+ assert.deepEqual(positionAt(table.tops,table.heights,0),{page:1,offset:0});
+ assert.equal(table.tops[1]-table.heights[0]-table.tops[0],12);
+ assert.deepEqual(positionAt(table.tops,table.heights,table.tops[1]),{page:2,offset:0});
+ assert.deepEqual(positionAt(table.tops,table.heights,table.tops[1]+table.heights[1]/2),{page:2,offset:0.5});
+ assert.deepEqual(positionAt(table.tops,table.heights,-40),{page:1,offset:0});
+ assert.deepEqual(positionAt(table.tops,table.heights,table.total),{page:3,offset:1});
+});
+
+test('绝对定位尺寸表与二分查找在混合页尺寸下仍然精确',()=>{
+ const sizes=[{width:100,height:200},{width:300,height:400},{width:300,height:400},{width:50,height:100}];
+ const table=buildMetrics(sizes,2,10,10);
+ assert.deepEqual(Array.from(table.tops),[10,420,1230,2040]);
+ assert.deepEqual(Array.from(table.heights),[400,800,800,200]);
+ assert.deepEqual(Array.from(table.widths),[200,600,600,100]);
+ assert.equal(table.width,600);
+ assert.equal(table.total,2040+200+10);
+ assert.equal(pageIndexAt(table.tops,0),0);
+ assert.equal(pageIndexAt(table.tops,419),0);
+ assert.equal(pageIndexAt(table.tops,420),1);
+ assert.equal(pageIndexAt(table.tops,1e9),3);
+ assert.deepEqual(visibleRange(table.tops,table.heights,0,500),{first:0,last:1});
+ assert.deepEqual(visibleRange(table.tops,table.heights,0,500,500),{first:0,last:1});
+ assert.deepEqual(visibleRange(table.tops,table.heights,table.total,500),{first:3,last:3});
+});
+
+test('适应宽度取出现最多的页宽，个别封面不把整本撑歪',()=>{
+ assert.equal(fitBasisWidth([{width:252,height:327},{width:590,height:792},{width:590,height:792}]),590);
+ assert.equal(fitBasisWidth([{width:612,height:792}]),612);
+ assert.equal(fitBasisWidth([{width:500,height:1},{width:500,height:1},{width:700,height:1}]),500);
 });
 
 test('FitR 矩形目录定位到矩形顶部，不静默跳到页首',async()=>{

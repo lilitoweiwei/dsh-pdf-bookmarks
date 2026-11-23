@@ -1,7 +1,7 @@
 {
   "name": "dsh-pdf-bookmarks",
-  "version": "0.1.3",
-  "description": "PDF outline navigation, local reading bookmarks, and automatic reading-position resume in the DeepSeek Harness right sidebar.",
+  "version": "0.1.4",
+  "description": "PDF outline navigation, local reading bookmarks, automatic reading-position resume, and a virtualised page renderer for the DeepSeek Harness right sidebar.",
   "type": "module",
   "main": "index.js",
   "exports": {

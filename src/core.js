@@ -49,15 +49,6 @@ export async function resolveDestination(document, destination) {
  return {page, offset};
 }
 
-export function readingPosition(rects, top, bottom) {
- let selected, visible = 0;
- for (const rect of rects) {
-  const overlap = Math.min(bottom,rect.bottom)-Math.max(top,rect.top);
-  if (overlap > visible) {selected=rect;visible=overlap;}
- }
- return selected ? {page:selected.page,offset:Math.max(0,Math.min(1,(top-selected.top)/(selected.bottom-selected.top)))} : {page:1,offset:0};
-}
-
 /** 自动续读位置：与书签分键存储，损坏或不可写时只退化为“不续读”。 */
 export function createProgressStore(storage, documentKey) {
  const key = `dsh-pdf-bookmarks:progress:v1:${documentKey}`;
@@ -85,4 +76,59 @@ export function shouldResume(position, numPages) {
  if (!position || !Number.isInteger(position.page) || !Number.isInteger(numPages)) return false;
  if (position.page < 1 || position.page > numPages) return false;
  return position.page > 1 || (Number.isFinite(position.offset) && position.offset > 0.02);
+}
+
+/** 页面尺寸表换算为绝对定位所需的累计偏移（CSS px）。sizes 为 96/72 比例的视口尺寸。 */
+export function buildMetrics(sizes, scale, gap, pad) {
+ const count = sizes.length, tops = new Float64Array(count), heights = new Float64Array(count), widths = new Float64Array(count);
+ let y = pad, widest = 0;
+ for (let index = 0; index < count; index++) {
+  const size = sizes[index];
+  tops[index] = y;
+  widths[index] = size.width * scale;
+  heights[index] = size.height * scale;
+  y += heights[index] + gap;
+  if (widths[index] > widest) widest = widths[index];
+ }
+ return {count, tops, heights, widths, width: widest, total: Math.max(pad, y - gap + pad)};
+}
+
+/** 视口顶部所在页（0 起算）；y 超出末尾时收敛到最后一页。 */
+export function pageIndexAt(tops, y) {
+ let low = 0, high = tops.length - 1, found = 0;
+ while (low <= high) {
+  const middle = (low + high) >> 1;
+  if (tops[middle] <= y) {found = middle; low = middle + 1} else high = middle - 1;
+ }
+ return found;
+}
+
+/** 视口 [top, top+height) 内的页范围（0 起算，含 overscan）。 */
+export function visibleRange(tops, heights, top, height, overscan = 0) {
+ const first = pageIndexAt(tops, top - overscan), limit = top + height + overscan;
+ let last = first;
+ while (last + 1 < tops.length && tops[last + 1] < limit) last++;
+ return {first, last};
+}
+
+/**
+ * 视口顶部所在页与页内相对位置。以顶边而非"可见面积最大"为准：
+ * 它与 jump 的落点严格互逆（同一位置读出来再跳回去一定回到原处），
+ * 缩放着窗、封面比正文小时也不会把"当前页"算成下一页。
+ */
+export function positionAt(tops, heights, top) {
+ const index = pageIndexAt(tops, top), height = heights[index] || 1;
+ return {page: index + 1, offset: Math.max(0, Math.min(1, (top - tops[index]) / height))};
+}
+
+/** 适应宽度以出现最多的页宽为准：个别封面/插页与正文尺寸不同时，不该用第 1 页把整本撑歪。 */
+export function fitBasisWidth(sizes) {
+ const counts = new Map();
+ for (const size of sizes) {
+  const width = Math.round(size.width * 10) / 10;
+  counts.set(width, (counts.get(width) || 0) + 1);
+ }
+ let best = 0, bestCount = 0;
+ for (const [width, count] of counts) if (count > bestCount || (count === bestCount && width > best)) {best = width; bestCount = count}
+ return best || 1;
 }
