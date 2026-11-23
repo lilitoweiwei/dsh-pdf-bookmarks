@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildMetrics, createBookmarkStore, createProgressStore, fitBasisWidth, pageIndexAt, positionAt, resolveDestination, documentKey, shouldResume, visibleRange} from '../src/core.js';
+import {buildMetrics, createBookmarkStore, createProgressStore, fitBasisWidth, newId, pageIndexAt, positionAt, resolveDestination, documentKey, shouldResume, visibleRange} from '../src/core.js';
 const memory = () => {const map=new Map();return {getItem:k=>map.get(k)??null,setItem:(k,v)=>map.set(k,v),removeItem:k=>map.delete(k)}};
 
 test('书签保存、改名和删除后重新打开仍恢复，文档间互不串用', () => {
@@ -113,4 +113,32 @@ test('只有离开开头且页码有效时才自动续读', () => {
  assert.equal(shouldResume({page:5,offset:0},10),true);
  assert.equal(shouldResume({page:11,offset:0},10),false);
  assert.equal(shouldResume({page:5,offset:0},undefined),false);
+});
+
+test('没有 crypto.subtle 的环境（http 域名）仍能算出同一把内容键',async()=>{
+ // 模拟非安全上下文：crypto 存在，但没有 subtle（Chrome 在 http 源上就是这样）
+ const insecure={getRandomValues:bytes=>{for(let i=0;i<bytes.length;i+=1)bytes[i]=(i*7+3)&255;return bytes}};
+ const sample=new Uint8Array(700);
+ for(let i=0;i<sample.length;i+=1)sample[i]=(i*31+5)&255;
+ const secure=await documentKey(sample);
+ assert.deepEqual(await documentKey(sample.slice(),insecure),secure);
+ assert.match(secure,/^[0-9a-f]{64}$/);
+ // 大输入走分片路径，逐字节仍与原生一致
+ const big=new Uint8Array(600000);
+ for(let i=0;i<big.length;i+=1)big[i]=(i*13)&255;
+ assert.deepEqual(await documentKey(big.slice(),insecure),await documentKey(big));
+ assert.notEqual(await documentKey(big.slice(),insecure),await documentKey(new Uint8Array(600000)));
+});
+
+test('安全上下文与非安全上下文都不会因为缺 API 而抛错：id 生成有降级',()=>{
+ const insecure={getRandomValues:bytes=>{for(let i=0;i<bytes.length;i+=1)bytes[i]=i;return bytes}};
+ const id=newId(insecure);
+ assert.match(id,/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+ assert.match(newId(),/^[0-9a-f-]{36}$/);
+ assert.notEqual(newId({}),newId({}));
+ // 书签保存在没有 randomUUID 的环境里也能走通
+ const storage=memory(), store=createBookmarkStore(storage,'book-id');
+ const saved=store.add({page:3,offset:0,label:'手机端'});
+ assert.match(saved.id,/^[0-9a-f-]{36}$/);
+ assert.deepEqual(store.list().map(item=>item.label),['手机端']);
 });

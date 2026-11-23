@@ -39,7 +39,7 @@ Host 入口 `index.js` 无运行时依赖、不提供或替换任何核心服务
 
 0.1.2 在 **macOS Apple Silicon、dsh Desktop 0.2.1-rc.5** 上验证独立 Host 加载与故障隔离；此前 rc.2/rc.3 的验收记录保留在历史更新说明中。其他版本默认尝试加载，但未逐一实测；Web、Windows、Linux 仍未经验证。
 
-本 fork 当前版本为 **0.1.4**（上游最新为 0.1.2；本 fork 未发布 npm 包，本机以源码 submodule + `link:` 安装）。推荐从 [最新发布页](https://github.com/woody-dx/dsh-pdf-bookmarks/releases/latest) 下载预构建安装包，或直接下载始终指向最新正式版的 [dsh-pdf-bookmarks.tgz](https://github.com/woody-dx/dsh-pdf-bookmarks/releases/latest/download/dsh-pdf-bookmarks.tgz)。在桌面版 **插件 → 添加插件** 中填写下载文件的绝对路径，然后启用插件并完整退出、重新打开 dsh。安装包包含完整 `lib/` 和许可证，不需要构建或运行安装脚本。
+本 fork 当前版本为 **0.1.5**（上游最新为 0.1.2；本 fork 未发布 npm 包，本机以源码 submodule + `link:` 安装）。推荐从 [最新发布页](https://github.com/woody-dx/dsh-pdf-bookmarks/releases/latest) 下载预构建安装包，或直接下载始终指向最新正式版的 [dsh-pdf-bookmarks.tgz](https://github.com/woody-dx/dsh-pdf-bookmarks/releases/latest/download/dsh-pdf-bookmarks.tgz)。在桌面版 **插件 → 添加插件** 中填写下载文件的绝对路径，然后启用插件并完整退出、重新打开 dsh。安装包包含完整 `lib/` 和许可证，不需要构建或运行安装脚本。
 
 从旧版升级时使用同一个插件名称安装新包，不必先卸载或清除应用存储。更新不会迁移、清空个人书签，也不会修改任务或账号。重启后可在插件详情页核对版本 `0.1.2`，再在 PDF 的查看器菜单选择 **PDF 书签**。已有 GitHub 标签、旧安装包和已经下载的文件不会自动变成新版，请下载最新资产后更新。
 
@@ -75,7 +75,7 @@ node scripts/host-smoke.cjs
 
 ## 本仓库与原版的差异（fork）
 
-本仓库 fork 自 [woody-dx/dsh-pdf-bookmarks](https://github.com/woody-dx/dsh-pdf-bookmarks)（MIT），在 `0.1.2` 基础上增加 **自动续读**（`0.1.3`）与 **大文档渲染性能重写**（`0.1.4`）：
+本仓库 fork 自 [woody-dx/dsh-pdf-bookmarks](https://github.com/woody-dx/dsh-pdf-bookmarks)（MIT），在 `0.1.2` 基础上增加 **自动续读**（`0.1.3`）、**大文档渲染性能重写**（`0.1.4`）与 **非安全上下文可用性修复**（`0.1.5`）：
 
 - 阅读位置按文档内容 SHA-256 自动保存（滚动停止 600ms、切走、关闭页面时落盘），重新打开自动回到上次位置；
 - 续读使用独立的 `progress:v1` 键，旧版书签数据原样读取，不需要迁移；
@@ -109,6 +109,14 @@ node scripts/host-smoke.cjs
 ## 与其他插件的区别
 
 本插件只增强已有工作区 PDF 的右侧预览，提供内嵌目录与个人阅读书签。论文文献库、AI 伴读、PDF 内容提取与批注工作台解决其他需求；本插件不增加模型工具或会话持久状态。社区目录中的会话书签与文件路径收藏也不等同于 PDF 页内阅读位置。
+
+## 0.1.5 更新说明
+
+- 修一个会让整份 PDF **完全打不开**的缺陷：内容键依赖的 `crypto.subtle` 只在**安全上下文**（https、localhost、file）里存在。用 http 域名访问 dsh（例如 `http://dshu:3080`、局域网 IP）时它是 `undefined`，阅读器在打开阶段就抛 `Cannot read properties of undefined (reading 'digest')`，页面只剩这行错误；同样原因下 `crypto.randomUUID` 也缺失，保存书签会报 `is not a function`。
+- 现在缺 `crypto.subtle` 时退到自带的纯 JS SHA-256（`src/sha256.js`），输出与原生**逐字节一致**，所以内容键不变、已有书签与续读数据不需要迁移；实现分片计算并让出主线程，27 MB 文档也不产生长任务（实测最长任务 0 ms，都是短切片）。
+- `newId()` 用 `crypto.randomUUID` → `getRandomValues` → `Math.random` 三级降级，书签 id 仍是标准 UUID v4。
+- 内容键与 PDF 解析、页面尺寸表并行计算，降级路径不会额外拖慢首屏（代价：http 源上首次打开 27 MB 文档约多 0.8 s，同一次会话内重复打开命中内存缓存；https 源走原生实现无此开销）。
+- 25 项 Node 测试通过（新增 2 项：无 `crypto.subtle` 环境算出同一把键、无 `randomUUID` 环境生成合法 id）；16 项浏览器功能回归全过；另在**真实非安全上下文**（`http://` 域名 + Chromium 147）端到端验证：打开、渲染、加书签、滚动存进度、刷新续读全部正常，控制台零错误，算出的键与 `sha256sum` 一致。
 
 ## 0.1.4 更新说明
 

@@ -1,3 +1,23 @@
+import {sha256HexChunked} from './sha256.js';
+
+/**
+ * 生成随机 id。
+ * 不用 `crypto.randomUUID()` 裸调用：它和 `crypto.subtle` 一样只在安全上下文里有，
+ * 通过 http 域名访问时是 undefined（书签保存会当场抛错）。
+ */
+export function newId(cryptoRef = globalThis.crypto) {
+ if (typeof cryptoRef?.randomUUID === 'function') {
+  try { return cryptoRef.randomUUID(); } catch {}
+ }
+ const bytes = new Uint8Array(16);
+ if (typeof cryptoRef?.getRandomValues === 'function') cryptoRef.getRandomValues(bytes);
+ else for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+ bytes[6] = (bytes[6] & 0x0f) | 0x40;
+ bytes[8] = (bytes[8] & 0x3f) | 0x80;
+ const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+ return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 /** 书签只保存导航元数据；写入成功后才返回新结果。 */
 export function createBookmarkStore(storage, documentKey) {
  const key = `dsh-pdf-bookmarks:v1:${documentKey}`;
@@ -15,7 +35,7 @@ export function createBookmarkStore(storage, documentKey) {
   add(value) {
    validate(value);
    const items = read();
-   const item = {...value, label: value.label.trim(), id: crypto.randomUUID(), createdAt: new Date().toISOString()};
+   const item = {...value, label: value.label.trim(), id: newId(), createdAt: new Date().toISOString()};
    write([...items, item]); return item;
   },
   rename(id, label) {
@@ -28,9 +48,30 @@ export function createBookmarkStore(storage, documentKey) {
 function validate(value, stored = false) {
  if (!value || !Number.isInteger(value.page) || value.page < 1 || !Number.isFinite(value.offset) || value.offset < 0 || value.offset > 1 || typeof value.label !== 'string' || !value.label.trim() || (stored && typeof value.id !== 'string')) throw new Error('书签数据无效，原数据已保留');
 }
-export async function documentKey(bytes) {
- const digest = await crypto.subtle.digest('SHA-256', bytes);
- return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+/**
+ * 文档内容键 = 整份内容的 SHA-256（小写十六进制）。
+ *
+ * `crypto.subtle` 只在安全上下文（https / localhost / file）里存在，通过 http 域名访问 DSH 时
+ * 它是 undefined，直接调用会抛 `Cannot read properties of undefined (reading 'digest')`，
+ * 于是整份 PDF 打不开。这里保留原生实现（快），缺失时退到自带的纯 JS SHA-256 ——
+ * 两者输出逐字节一致，因此书签/续读的键在任何环境下都相同，已有数据不需要迁移。
+ * 降级路径分片计算并让出主线程，27 MB 的文档也不会把界面卡住。
+ */
+const keyCache = new WeakMap();
+export async function documentKey(bytes, cryptoRef = globalThis.crypto) {
+ const cached = keyCache.get(bytes);
+ if (cached !== undefined) return cached;
+ let key;
+ const subtle = cryptoRef?.subtle;
+ if (typeof subtle?.digest === 'function') {
+  try {
+   const digest = await subtle.digest('SHA-256', bytes);
+   key = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+  } catch { /* 引擎拒绝时退到纯 JS，输出相同 */ }
+ }
+ if (key === undefined) key = await sha256HexChunked(bytes);
+ keyCache.set(bytes, key);
+ return key;
 }
 /** PDF 目录的零起算索引或引用转换为阅读器的一起算页码。 */
 export async function resolveDestination(document, destination) {

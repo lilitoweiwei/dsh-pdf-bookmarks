@@ -241,11 +241,15 @@ function Viewer({content, resourceAddress, scrollportRef, useTabInfo, loadEngine
    try {engine=await loadEngine()} catch(err) {console.warn('[dsh-pdf-bookmarks] 引擎不可用，回退内置预览',err);if(!signal.aborted)fallback();return}
    signal.throwIfAborted();
    session=engine.openPdf(bytes,signal,err=>{if(!signal.aborted)setError('PDF 渲染进程异常，请重试或使用内置预览')});
-   const [document,key]=await Promise.all([session.document,documentKey(bytes)]);
+   // 内容键与 PDF 解析、尺寸表并行算：没有 crypto.subtle 的环境要跑纯 JS SHA-256（27 MB 约 0.7 s），
+   // 串在首屏前面就是白等这 0.7 s。
+   const keying=documentKey(bytes);keying.catch(()=>{});
+   const document=await session.document;
    signal.throwIfAborted();
-   try {progress.current=createProgressStore(window.localStorage,key);const saved=progress.current.read();if(shouldResume(saved,document.numPages))resumeAt.current=saved} catch(err) {progress.current=null;console.warn('[dsh-pdf-bookmarks] 阅读进度不可用',err)}
    const table=await readSizes(document,signal,(done,total)=>setPreparing(`正在准备页面 ${done} / ${total}`));
    signal.throwIfAborted();
+   const key=await keying;
+   try {progress.current=createProgressStore(window.localStorage,key);const saved=progress.current.read();if(shouldResume(saved,document.numPages))resumeAt.current=saved} catch(err) {progress.current=null;console.warn('[dsh-pdf-bookmarks] 阅读进度不可用',err)}
    setPreparing('');
    sizes.current=table.sizes;
    setTableVersion(value=>value+1);
